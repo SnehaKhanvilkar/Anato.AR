@@ -2,10 +2,10 @@
 (function () {
   "use strict";
   const $ = s => document.querySelector(s);
-  let sys = null, scene = null, running = false, ready = false;
+  let sys = null, scene = null, running = false, ready = false, startupTimer = null;
 
   const show = (id, on) => { const e = $(id); if (e) e.hidden = !on; };
-  function fail(html) { show("#loader", false); show("#err", true); $("#errText").innerHTML = html; show("#start", true); }
+  function fail(html) { if (startupTimer) { clearTimeout(startupTimer); startupTimer = null; } show("#loader", false); show("#intro", true); show("#err", true); $("#errText").innerHTML = html; show("#start", true); show("#hud", false); show("#scan", false); document.body.classList.remove("ar"); }
   async function exists(u) { if (u.startsWith("data:")) return true; try { return (await fetch(u, { method: "HEAD", cache: "no-store" })).ok; } catch (e) { return false; } }
   function setStatus(t, ok) { const s = $("#status"); s.textContent = t; s.classList.toggle("ok", !!ok); }
 
@@ -20,15 +20,18 @@
     if (!hasGlb) return fail("<b>3D model missing:</b> <code>assets/heart.glb</code>. Add your heart model there (see README), or try the <a href='index.html#explore'>3D demo</a>.");
     $("#loadText").textContent = "Starting camera and tracker…";
     document.body.classList.add("ar");
-    // Keep the visible startup panel in place until MindAR confirms readiness.
+    // Keep the visible startup panel above the scene until MindAR is ready.
     show("#intro", true);
     show("#loader", true);
     $("#loadText").textContent = "Starting camera and AR tracker…";
+    startupTimer = setTimeout(() => {
+      fail("<b>AR tracker did not finish starting.</b> The camera may be opening, but MindAR did not signal readiness. Refresh the page and try again. If it repeats, the marker tracking file or camera initialization is failing.");
+    }, 15000);
     $("#stage").innerHTML = `<a-scene mindar-image="imageTargetSrc:${window.MODEL.markerUrl};autoStart:false;uiLoading:no;uiScanning:no;uiError:no" color-space="sRGB" renderer="colorManagement:true;physicallyCorrectLights:true" vr-mode-ui="enabled:false" device-orientation-permission-ui="enabled:false">
       <a-camera position="0 0 0" look-controls="enabled:false" cursor="fuse:false;rayOrigin:mouse" raycaster="far:10000;objects:.clickable"></a-camera>
       <a-entity light="type:ambient;intensity:.7"></a-entity><a-entity light="type:directional;intensity:1.2" position="1 2 3"></a-entity>
       <a-entity id="anchor" mindar-image-target="targetIndex:0">
-        <a-entity id="rig" position="0 0 0.25" scale="0.3 0.3 0.3"><a-entity id="spin"><a-entity id="heart" class="clickable" scale="2.5 2.5 2.5" gltf-model="url(${window.MODEL.url})"></a-entity></a-entity></a-entity>
+        <a-entity id="rig" position="0 0 0.25" scale="0.3 0.3 0.3"><a-entity id="spin"><a-entity id="heart" class="clickable" gltf-model="url(${window.MODEL.url})"></a-entity></a-entity></a-entity>
       </a-entity></a-scene>`;
     scene = $("#stage a-scene"); const anchor = $("#anchor"), heart = $("#heart");
     HeartUI.setup(scene, heart, $("#spin"));
@@ -37,6 +40,7 @@
     anchor.addEventListener("targetFound", () => { show("#scan", false); setStatus("Target detected ✓", true); });
     anchor.addEventListener("targetLost", () => { show("#scan", true); setStatus("Target lost. Point back at the marker"); const k = $("#callout"); if (k) k.hidden = true; });
     scene.addEventListener("arReady", () => {
+      if (startupTimer) { clearTimeout(startupTimer); startupTimer = null; }
       ready = true;
       show("#loader", false);
       show("#intro", false);
@@ -44,40 +48,18 @@
       show("#hud", true);
       setStatus("Scanning for the marker…");
     });
-    scene.addEventListener("arError", () => {
-      show("#intro", true);
-      show("#loader", false);
-      show("#err", true);
-      $("#errText").innerHTML = "<b>AR initialization failed.</b> The camera permission was granted, but the AR tracker could not start. Refresh the page and try again. If this repeats, we need to inspect the browser console.";
-      show("#start", true);
-    });
-    // If MindAR hangs before emitting arReady, show an explanation instead of a blank screen.
-    const startupTimer = setTimeout(() => {
-      if (!ready) {
-        show("#intro", true);
-        show("#loader", false);
-        show("#err", true);
-        $("#errText").innerHTML = "<b>The AR tracker is taking too long to start.</b> Your camera permission is enabled, but the scanner has not finished initializing. Refresh the page and try again. If it repeats, send us a screenshot of this message.";
-        show("#start", true);
-      }
-    }, 15000);
-    scene.addEventListener("arReady", () => clearTimeout(startupTimer), { once: true });
+    scene.addEventListener("arError", () => { fail("<b>AR initialization failed.</b> Allow camera access, close other apps using the camera, then refresh and try again. If it repeats, the tracking engine or device camera is failing."); });
     const go = async () => {
       try { sys = scene.systems["mindar-image-system"]; running = true; await sys.start(); }
-      catch (e) {
-        show("#intro", true);
-        show("#loader", false);
-        show("#err", true);
-        $("#errText").innerHTML = "<b>Camera/AR startup failed.</b> Camera access was granted, but the tracker could not start. Refresh the page and try again.";
-        show("#start", true);
-      }
+      catch (e) { console.error("AnatoAR start failed:", e); fail("<b>Camera/AR startup failed.</b> Refresh the page and allow camera access. If it continues, inspect the browser Console for the underlying error."); }
     };
     scene.hasLoaded ? go() : scene.addEventListener("loaded", go, { once: true });
   }
 
   // Stops tracking and every camera track, then returns to the start screen.
   function stop() {
-    try { if (sys && ready && sys.controller) sys.stop(); } catch (e) { /* already stopped */ }
+    if (startupTimer) { clearTimeout(startupTimer); startupTimer = null; }
+    try { if (sys && sys.controller) sys.stop(); } catch (e) { /* already stopped */ }
     ready = false;
     document.querySelectorAll("video").forEach(v => { if (v.srcObject) v.srcObject.getTracks().forEach(t => t.stop()); v.srcObject = null; v.remove(); });
     HeartUI.destroy(); $("#stage").innerHTML = ""; sys = scene = null; running = false;
