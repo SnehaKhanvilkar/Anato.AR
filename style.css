@@ -42,15 +42,12 @@ footer{text-align:center;padding:20px;color:var(--mute);font-size:.8rem}[hidden]
 [class^="a-enter"],.a-orientation-modal,.a-fullscreen{display:none!important}
 
 
-/* AR startup diagnostics: keep the startup panel above the camera and scene. */
-body.ar .intro {
-  z-index: 1000 !important;
-}
-body.ar .intro .box {
-  position: relative;
-  z-index: 1001;
-}
-body.ar #err {
-  position: relative;
-  z-index: 1002;
-}
+/* AR scene layering: keep the camera feed visible and UI above it. */
+body.ar, body.ar #stage { background: #000; }
+body.ar #stage { z-index: 1; }
+body.ar #stage a-scene { position: fixed !important; inset: 0 !important; width: 100% !important; height: 100% !important; }
+body.ar #stage video, body.ar video { position: fixed !important; inset: 0 !important; width: 100% !important; height: 100% !important; object-fit: cover !important; z-index: 0 !important; }
+body.ar #stage canvas, body.ar #stage .a-canvas { position: fixed !important; inset: 0 !important; width: 100% !important; height: 100% !important; background: transparent !important; z-index: 1 !important; }
+body.ar .intro { z-index: 20; }
+body.ar .hud { z-index: 30; }
+body.ar .scan { z-index: 25; }
