@@ -20,6 +20,10 @@
     if (!hasGlb) return fail("<b>3D model missing:</b> <code>assets/heart.glb</code>. Add your heart model there (see README), or try the <a href='index.html#explore'>3D demo</a>.");
     $("#loadText").textContent = "Starting camera and tracker…";
     document.body.classList.add("ar");
+    // Keep the visible startup panel in place until MindAR confirms readiness.
+    show("#intro", true);
+    show("#loader", true);
+    $("#loadText").textContent = "Starting camera and AR tracker…";
     $("#stage").innerHTML = `<a-scene mindar-image="imageTargetSrc:${window.MODEL.markerUrl};autoStart:false;uiLoading:no;uiScanning:no;uiError:no" color-space="sRGB" renderer="colorManagement:true;physicallyCorrectLights:true" vr-mode-ui="enabled:false" device-orientation-permission-ui="enabled:false">
       <a-camera position="0 0 0" look-controls="enabled:false" cursor="fuse:false;rayOrigin:mouse" raycaster="far:10000;objects:.clickable"></a-camera>
       <a-entity light="type:ambient;intensity:.7"></a-entity><a-entity light="type:directional;intensity:1.2" position="1 2 3"></a-entity>
@@ -40,10 +44,33 @@
       show("#hud", true);
       setStatus("Scanning for the marker…");
     });
-    scene.addEventListener("arError", () => { stop(); fail("<b>The camera couldn't start.</b> Allow camera access in your browser (tap the lock icon in the address bar), close other apps using the camera, then try again. If it keeps failing, use the <a href='index.html#explore'>3D demo</a>."); });
+    scene.addEventListener("arError", () => {
+      show("#intro", true);
+      show("#loader", false);
+      show("#err", true);
+      $("#errText").innerHTML = "<b>AR initialization failed.</b> The camera permission was granted, but the AR tracker could not start. Refresh the page and try again. If this repeats, we need to inspect the browser console.";
+      show("#start", true);
+    });
+    // If MindAR hangs before emitting arReady, show an explanation instead of a blank screen.
+    const startupTimer = setTimeout(() => {
+      if (!ready) {
+        show("#intro", true);
+        show("#loader", false);
+        show("#err", true);
+        $("#errText").innerHTML = "<b>The AR tracker is taking too long to start.</b> Your camera permission is enabled, but the scanner has not finished initializing. Refresh the page and try again. If it repeats, send us a screenshot of this message.";
+        show("#start", true);
+      }
+    }, 15000);
+    scene.addEventListener("arReady", () => clearTimeout(startupTimer), { once: true });
     const go = async () => {
       try { sys = scene.systems["mindar-image-system"]; running = true; await sys.start(); }
-      catch (e) { stop(); fail("<b>Camera access was denied or no camera was found.</b> Allow camera access and press Start AR again, or use the <a href='index.html#explore'>3D demo</a>."); }
+      catch (e) {
+        show("#intro", true);
+        show("#loader", false);
+        show("#err", true);
+        $("#errText").innerHTML = "<b>Camera/AR startup failed.</b> Camera access was granted, but the tracker could not start. Refresh the page and try again.";
+        show("#start", true);
+      }
     };
     scene.hasLoaded ? go() : scene.addEventListener("loaded", go, { once: true });
   }
