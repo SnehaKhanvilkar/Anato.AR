@@ -2,11 +2,24 @@
 (function () {
   "use strict";
   const $ = s => document.querySelector(s);
-  let sys = null, scene = null, running = false, ready = false, startupTimer = null;
+  let sys = null, scene = null, running = false, ready = false;
 
   const show = (id, on) => { const e = $(id); if (e) e.hidden = !on; };
-  function fail(html) { if (startupTimer) { clearTimeout(startupTimer); startupTimer = null; } show("#loader", false); show("#intro", true); show("#err", true); $("#errText").innerHTML = html; show("#start", true); show("#hud", false); show("#scan", false); document.body.classList.remove("ar"); }
-  async function exists(u) { if (u.startsWith("data:")) return true; try { return (await fetch(u, { method: "HEAD", cache: "no-store" })).ok; } catch (e) { return false; } }
+  function fail(html) { show("#loader", false); show("#err", true); $("#errText").innerHTML = html; show("#start", true); }
+  async function exists(u) {
+    if (u.startsWith("data:")) return true;
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), 8000);
+    try {
+      // Use GET rather than HEAD: some static hosts/proxies do not answer HEAD reliably.
+      const response = await fetch(u, { method: "GET", cache: "no-store", headers: { "Range": "bytes=0-0" }, signal: controller.signal });
+      return response.ok || response.status === 206;
+    } catch (e) {
+      return false;
+    } finally {
+      clearTimeout(timer);
+    }
+  }
   function setStatus(t, ok) { const s = $("#status"); s.textContent = t; s.classList.toggle("ok", !!ok); }
 
   async function start() {
@@ -14,24 +27,17 @@
     if (!window.AFRAME || !AFRAME.systems["mindar-image-system"]) return fail("The AR libraries didn't load. Make sure the <code>vendor</code> folder is next to this page and open the site through the launcher or an HTTPS link.");
     if (!window.isSecureContext) return fail("The camera only works on <b>https://</b> or <b>localhost</b>. This page was opened insecurely (for example with file:// or a plain http:// network address). Use START_ANATOAR.bat on your laptop, or deploy to an HTTPS host to test on your phone.");
     if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) return fail("This browser can't open the camera. Try the latest Chrome, Edge or Safari, or use the <a href='index.html#explore'>3D demo</a>.");
-    show("#loader", true); $("#loadText").textContent = "Checking files…";
+    show("#loader", true); $("#loadText").textContent = "Checking model and tracking files (up to 8 seconds)…";
     const [hasMind, hasGlb] = await Promise.all([exists(window.MODEL.markerUrl), exists(window.MODEL.url)]);
     if (!hasMind) return fail("<b>Tracking file missing:</b> <code>assets/heart.mind</code>. Compile <code>assets/heart-marker.jpg</code> with the MindAR compiler (see README) and put the result in <code>assets/</code>. Meanwhile, try the <a href='index.html#explore'>3D demo</a>.");
     if (!hasGlb) return fail("<b>3D model missing:</b> <code>assets/heart.glb</code>. Add your heart model there (see README), or try the <a href='index.html#explore'>3D demo</a>.");
     $("#loadText").textContent = "Starting camera and tracker…";
     document.body.classList.add("ar");
-    // Keep the visible startup panel above the scene until MindAR is ready.
-    show("#intro", true);
-    show("#loader", true);
-    $("#loadText").textContent = "Starting camera and AR tracker…";
-    startupTimer = setTimeout(() => {
-      fail("<b>AR tracker did not finish starting.</b> The camera may be opening, but MindAR did not signal readiness. Refresh the page and try again. If it repeats, the marker tracking file or camera initialization is failing.");
-    }, 15000);
-    $("#stage").innerHTML = `<a-scene mindar-image="imageTargetSrc:${window.MODEL.markerUrl};autoStart:false;uiLoading:no;uiScanning:no;uiError:no" color-space="sRGB" renderer="colorManagement:true;physicallyCorrectLights:true" vr-mode-ui="enabled:false" device-orientation-permission-ui="enabled:false">
+    $("#stage").innerHTML = `<a-scene mindar-image="imageTargetSrc:${window.MODEL.markerUrl};autoStart:false;uiLoading:no;uiScanning:no;uiError:no" color-space="sRGB" renderer="colorManagement:true;physicallyCorrectLights:true;alpha:true" vr-mode-ui="enabled:false" device-orientation-permission-ui="enabled:false">
       <a-camera position="0 0 0" look-controls="enabled:false" cursor="fuse:false;rayOrigin:mouse" raycaster="far:10000;objects:.clickable"></a-camera>
       <a-entity light="type:ambient;intensity:.7"></a-entity><a-entity light="type:directional;intensity:1.2" position="1 2 3"></a-entity>
       <a-entity id="anchor" mindar-image-target="targetIndex:0">
-        <a-entity id="rig" position="0 0 0.25" scale="0.3 0.3 0.3"><a-entity id="spin"><a-entity id="heart" class="clickable" gltf-model="url(${window.MODEL.url})"></a-entity></a-entity></a-entity>
+        <a-entity id="rig" position="0 0 0.25" scale="0.3 0.3 0.3"><a-entity id="spin"><a-entity id="heart" class="clickable" scale="2.5 2.5 2.5" gltf-model="url(${window.MODEL.url})"></a-entity></a-entity></a-entity>
       </a-entity></a-scene>`;
     scene = $("#stage a-scene"); const anchor = $("#anchor"), heart = $("#heart");
     HeartUI.setup(scene, heart, $("#spin"));
@@ -40,7 +46,6 @@
     anchor.addEventListener("targetFound", () => { show("#scan", false); setStatus("Target detected ✓", true); });
     anchor.addEventListener("targetLost", () => { show("#scan", true); setStatus("Target lost. Point back at the marker"); const k = $("#callout"); if (k) k.hidden = true; });
     scene.addEventListener("arReady", () => {
-      if (startupTimer) { clearTimeout(startupTimer); startupTimer = null; }
       ready = true;
       show("#loader", false);
       show("#intro", false);
@@ -48,18 +53,17 @@
       show("#hud", true);
       setStatus("Scanning for the marker…");
     });
-    scene.addEventListener("arError", () => { fail("<b>AR initialization failed.</b> Allow camera access, close other apps using the camera, then refresh and try again. If it repeats, the tracking engine or device camera is failing."); });
+    scene.addEventListener("arError", () => { stop(); fail("<b>The camera couldn't start.</b> Allow camera access in your browser (tap the lock icon in the address bar), close other apps using the camera, then try again. If it keeps failing, use the <a href='index.html#explore'>3D demo</a>."); });
     const go = async () => {
       try { sys = scene.systems["mindar-image-system"]; running = true; await sys.start(); }
-      catch (e) { console.error("AnatoAR start failed:", e); fail("<b>Camera/AR startup failed.</b> Refresh the page and allow camera access. If it continues, inspect the browser Console for the underlying error."); }
+      catch (e) { stop(); fail("<b>Camera access was denied or no camera was found.</b> Allow camera access and press Start AR again, or use the <a href='index.html#explore'>3D demo</a>."); }
     };
     scene.hasLoaded ? go() : scene.addEventListener("loaded", go, { once: true });
   }
 
   // Stops tracking and every camera track, then returns to the start screen.
   function stop() {
-    if (startupTimer) { clearTimeout(startupTimer); startupTimer = null; }
-    try { if (sys && sys.controller) sys.stop(); } catch (e) { /* already stopped */ }
+    try { if (sys && ready && sys.controller) sys.stop(); } catch (e) { /* already stopped */ }
     ready = false;
     document.querySelectorAll("video").forEach(v => { if (v.srcObject) v.srcObject.getTracks().forEach(t => t.stop()); v.srcObject = null; v.remove(); });
     HeartUI.destroy(); $("#stage").innerHTML = ""; sys = scene = null; running = false;
